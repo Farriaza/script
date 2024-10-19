@@ -1,0 +1,177 @@
+-- Creación de la base de datos
+CREATE DATABASE HospitalDB;
+GO
+USE HospitalDB;
+GO
+
+-- Creación de tablas
+CREATE TABLE Pacientes (
+    ID INT PRIMARY KEY IDENTITY(1,1),
+    Nombre NVARCHAR(100),
+    Apellido NVARCHAR(100),
+    FechaNacimiento DATE,
+    Direccion NVARCHAR(255),
+    Email NVARCHAR(100),
+    Telefono NVARCHAR(20)
+);
+
+INSERT INTO Pacientes (Nombre, Apellido, FechaNacimiento, Direccion, Email, Telefono)
+VALUES 
+('María', 'Fernández', '1985-04-12', 'Consejal Daniel Gonzales 661, Quilicura', 'maria.fernandez@gmail.com', '9370506612'),
+('Luis', 'Rodríguez', '1990-09-30', 'pasaje 4 casa 0573','Santiago' 'luis.rodriguez@gmail.com', '996390085'),
+('Claudia', 'Martínez', '1975-11-22', 'Benito Casanova 710','Pudahuel', 'claudia.martinez@gmail.com', '994368778');
+
+
+CREATE TABLE Doctores (
+    ID INT PRIMARY KEY IDENTITY(1,1),
+    Nombre NVARCHAR(100),
+    Apellido NVARCHAR(100),
+    Especialidad NVARCHAR(100),
+    Email NVARCHAR(100),
+    Telefono NVARCHAR(20)
+);
+
+INSERT INTO Doctores (Nombre, Apellido, Especialidad, Email, Telefono)
+VALUES 
+('Juan', 'Pérez', 'Cardiología', 'juan.perez@hospital.com', '963422132'),
+('Ana', 'Gómez', 'Dermatología', 'ana.gomez@hospital.com', '923122436'),
+('Carlos', 'López', 'Neurología', 'carlos.lopez@hospital.com', '987654321');
+
+CREATE TABLE Citas (
+    ID INT PRIMARY KEY IDENTITY(1,1),
+    PacienteID INT FOREIGN KEY REFERENCES Pacientes(ID),
+    DoctorID INT FOREIGN KEY REFERENCES Doctores(ID),
+    FechaCita DATE,
+    HoraCita TIME,
+    EstadoCita NVARCHAR(50) CHECK (EstadoCita IN ('Pendiente', 'Completada', 'Cancelada'))
+);
+
+INSERT INTO Citas (PacienteID, DoctorID, FechaCita, HoraCita, EstadoCita)
+VALUES
+(1, 1, '2024-10-20', '10:00', 'Pendiente'),  
+(2, 2, '2024-10-21', '11:30', 'Pendiente'),  
+(3, 3, '2024-10-22', '12:00', 'Pendiente');  
+
+CREATE TABLE Tratamientos (
+    ID INT PRIMARY KEY IDENTITY(1,1),
+    CitasID INT FOREIGN KEY REFERENCES Citas(ID),
+    DescripcionTratamiento NVARCHAR(255),
+    Costo DECIMAL(10, 2)
+);
+INSERT INTO Tratamientos (CitasID, DescripcionTratamiento, Costo)
+VALUES 
+(2, 'Consulta Cardiológica', 150000.00),    
+(3, 'Examen Dermatológico', 100000.00),     
+(4, 'Terapia Neurológica', 200000.00);      
+
+
+CREATE TABLE Pagos (
+    ID INT PRIMARY KEY IDENTITY(1,1),
+    PacienteID INT FOREIGN KEY REFERENCES Pacientes(ID),
+    FechaPago DATE,
+    MontoPago DECIMAL(10, 2),
+    MetodoPago NVARCHAR(50)
+);
+INSERT INTO Pagos (PacienteID, FechaPago, MontoPago, MetodoPago)
+VALUES 
+(1, '2024-10-21', 150.000, 'Tarjeta de Crédito'),
+(2, '2024-10-22', 100.000, 'Efectivo'),
+(3, '2024-10-23', 200.000, 'Transferencia Bancaria');
+
+
+CREATE TABLE AuditoriaCitas (
+    ID INT PRIMARY KEY IDENTITY(1,1),
+    CitaID INT FOREIGN KEY REFERENCES Citas(ID),
+    FechaCambio DATETIME DEFAULT GETDATE(),
+    EstadoAnterior NVARCHAR(50),
+    EstadoNuevo NVARCHAR(50),
+    UsuarioModificador NVARCHAR(100)
+);
+
+-- Auditoría de cambios en el estado de las citas
+CREATE TRIGGER trg_AuditoriaCitas
+ON Citas
+AFTER UPDATE
+AS
+BEGIN
+    DECLARE @CitaID INT, @EstadoAnterior NVARCHAR(50), @EstadoNuevo NVARCHAR(50), @UsuarioModificador NVARCHAR(100);
+    
+    SELECT @CitaID = inserted.ID,
+           @EstadoAnterior = deleted.EstadoCita,
+           @EstadoNuevo = inserted.EstadoCita
+    FROM inserted
+    JOIN deleted ON inserted.ID = deleted.ID;
+    
+    IF @EstadoAnterior <> @EstadoNuevo
+    BEGIN
+        INSERT INTO AuditoriaCitas (CitaID, EstadoAnterior, EstadoNuevo, UsuarioModificador)
+        VALUES (@CitaID, @EstadoAnterior, @EstadoNuevo, SYSTEM_USER);
+    END
+END;
+GO
+
+-- Procedimiento para registrar un tratamiento y calcular el costo total
+CREATE PROCEDURE sp_RegistrarTratamiento
+    @CitaID INT,
+    @DescripcionTratamiento NVARCHAR(255),
+    @Costo DECIMAL(10, 2)
+AS
+BEGIN
+    INSERT INTO Tratamientos (CitaID, DescripcionTratamiento, Costo)
+    VALUES (@CitaID, @DescripcionTratamiento, @Costo);
+    
+    DECLARE @PacienteID INT;
+    
+    SELECT @PacienteID = PacienteID FROM Citas WHERE ID = @CitaID;
+    
+    SELECT SUM(Costo) AS CostoTotal FROM Tratamientos 
+    WHERE CitaID IN (SELECT ID FROM Citas WHERE PacienteID = @PacienteID);
+END;
+GO
+
+-- Procedimiento para registrar un pago
+CREATE PROCEDURE sp_RegistrarPago
+    @PacienteID INT,
+    @MontoPago DECIMAL(10, 2),
+    @MetodoPago NVARCHAR(50)
+AS
+BEGIN
+    INSERT INTO Pagos (PacienteID, FechaPago, MontoPago, MetodoPago)
+    VALUES (@PacienteID, GETDATE(), @MontoPago, @MetodoPago);
+END;
+GO
+
+-- Roles y permisos
+CREATE ROLE rol_paciente;
+GRANT SELECT, UPDATE ON Citas TO rol_paciente;
+GRANT SELECT, UPDATE ON Tratamientos TO rol_paciente;
+DENY DELETE ON Citas TO rol_paciente;
+
+CREATE ROLE rol_doctor;
+GRANT SELECT ON Citas TO rol_doctor;
+DENY SELECT, UPDATE ON Pagos TO rol_doctor;
+DENY SELECT, UPDATE ON Doctores TO rol_doctor;
+GO
+
+-- Consultas avanzadas
+-- Lista de doctores con más citas completadas en el último mes
+SELECT Doctores.Nombre, Doctores.Apellido, COUNT(*) AS CitasCompletadas
+FROM Citas
+JOIN Doctores ON Citas.DoctorID = Doctores.ID
+WHERE EstadoCita = 'Completada' AND FechaCita >= DATEADD(MONTH, -1, GETDATE())
+GROUP BY Doctores.Nombre, Doctores.Apellido
+ORDER BY CitasCompletadas DESC;
+
+-- Informe de pagos por paciente en un rango de fechas
+CREATE PROCEDURE sp_InformePagosPorPaciente
+    @FechaInicio DATE,
+    @FechaFin DATE
+AS
+BEGIN
+    SELECT Pacientes.Nombre, Pacientes.Apellido, SUM(Pagos.MontoPago) AS TotalPagos
+    FROM Pagos
+    JOIN Pacientes ON Pagos.PacienteID = Pacientes.ID
+    WHERE Pagos.FechaPago BETWEEN @FechaInicio AND @FechaFin
+    GROUP BY Pacientes.Nombre, Pacientes.Apellido;
+END;
+GO
